@@ -79,10 +79,8 @@ def get_product(sku: str):
             product_id, display_name, category, face_value, cred_price, image_url = result
             
             price_data = {
-                "type": "RANGE",
-                "min": 10,
-                "max": 10000,
-                "denominations": [100, 200, 500, 1000]
+                "type": "FIXED",
+                "denominations": [int(face_value / 100)] if face_value else [100, 200, 500, 1000]
             }
                 
             return {
@@ -114,7 +112,7 @@ def place_order(req: PurchaseRequest):
     
     order_payload = {
         "address": {
-            "firstname": "Test",
+            "firstname": "Giftcred",
             "lastname": "User",
             "email": req.email,
             "telephone": formatted_mobile,
@@ -122,7 +120,7 @@ def place_order(req: PurchaseRequest):
             "postcode": "560102"
         },
         "billing": {
-            "firstname": "Test",
+            "firstname": "Giftcred",
             "lastname": "User",
             "email": req.email,
             "telephone": formatted_mobile,
@@ -138,7 +136,7 @@ def place_order(req: PurchaseRequest):
         "refno": refno,
         "products": [
             {
-                "sku": "UBEFLOW",
+                "sku": item.sku,
                 "price": item.amount,
                 "qty": item.quantity,
                 "currency": "356",
