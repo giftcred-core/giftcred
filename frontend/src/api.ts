@@ -8,6 +8,7 @@ export interface GiftCard {
     amount: string;
     validity: string;
     activationCode?: string;
+    activationUrl?: string;
     status?: string;
 }
 
