@@ -1,7 +1,20 @@
 import { BrowserRouter as Router, Routes, Route, Link, NavLink, useParams, useNavigate } from "react-router-dom";
-import { useEffect, useState, createContext, useContext, useMemo } from "react";
+import { useCallback, useEffect, useState, createContext, useContext, useMemo } from "react";
 import { getCatalog, placePurchaseOrder, getOrderHistory, getProduct, refreshOrder } from "./api";
 import type { Order } from "./api";
+import {
+  copyToClipboard,
+  isOrderPending,
+  OrderDetailBlock,
+  OrderPurchasedItems,
+  OrdersSummaryBar,
+  ProcessingStatusBlock,
+  useProcessingPoll,
+  VoucherGrid,
+} from "./orderUi";
+
+// Max quantity per cart line (Woohoo allows larger orders via async mode).
+const MAX_LINE_QTY = 10;
 
 // --- Types ---
 interface Price {
@@ -652,8 +665,11 @@ function ProductDetail() {
               <div className="quantity-selector">
                 <button className="qty-btn" onClick={() => setQuantity((q) => Math.max(1, q - 1))}>−</button>
                 <span className="qty-display">{quantity}</span>
-                <button className="qty-btn" onClick={() => setQuantity((q) => Math.min(10, q + 1))}>+</button>
+                <button className="qty-btn" onClick={() => setQuantity((q) => Math.min(MAX_LINE_QTY, q + 1))} disabled={quantity >= MAX_LINE_QTY}>+</button>
               </div>
+              <p className="muted" style={{ fontSize: "0.85rem", marginTop: "0.35rem" }}>
+                Up to {MAX_LINE_QTY} per item. Orders with more than 4 cards are processed asynchronously.
+              </p>
             </div>
 
             <div className="payment-summary">
@@ -692,6 +708,8 @@ function Cart() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [orderResult, setOrderResult] = useState<any>(null);
+  const [fetchingCodes, setFetchingCodes] = useState(false);
+  const [fetchCodesError, setFetchCodesError] = useState("");
 
   const totalPayable = cart.reduce((acc, item) => {
     const payAmt = item.amount * item.quantity;
@@ -705,14 +723,20 @@ function Cart() {
     if (!email || !email.includes("@")) return setError("Please enter a valid email address.");
 
     setLoading(true);
+    const purchasedItems = cart.map((i) => ({
+      sku: i.sku,
+      amount: i.amount,
+      quantity: i.quantity,
+      brandName: i.brandName,
+    }));
     try {
       const data = await placePurchaseOrder({
-        items: cart.map((i) => ({ sku: i.sku, amount: i.amount, quantity: i.quantity })),
+        items: purchasedItems,
         mobileNumber: mobile,
         email: email
       });
       if (data.success) {
-        setOrderResult(data);
+        setOrderResult({ ...data, items: purchasedItems });
         clearCart();
       } else {
         setError("Checkout failed. Please try again.");
@@ -724,43 +748,63 @@ function Cart() {
     }
   };
 
-  const handleCopy = (text: string) => navigator.clipboard.writeText(text);
+  const handleCopy = (text: string) => copyToClipboard(text);
+
+  const handleFetchCodesOnSuccess = useCallback(async () => {
+    if (!orderResult?.orderId) return;
+    setFetchingCodes(true);
+    setFetchCodesError("");
+    try {
+      const updated = await refreshOrder(orderResult.orderId);
+      setOrderResult((prev: any) => ({
+        ...prev,
+        cards: updated.cards,
+        status: updated.status,
+      }));
+    } catch (err: any) {
+      setFetchCodesError(err.response?.data?.detail || "Could not fetch codes yet. Try again shortly.");
+    } finally {
+      setFetchingCodes(false);
+    }
+  }, [orderResult?.orderId]);
+
+  const successPending = orderResult && isOrderPending(orderResult);
+  const successPoll = useProcessingPoll(!!successPending, handleFetchCodesOnSuccess, !!orderResult?.orderId);
 
   if (orderResult) {
     return (
       <div className="page">
-        <div className="container" style={{ maxWidth: "680px" }}>
+        <div className="container order-success-wrap">
           <div className="success-hero">
             <div className="check">✓</div>
-            <h2>Order successful!</h2>
-            <p>An email with your vouchers is on its way to {email || "your inbox"}.</p>
+            <h2>{orderResult.cards?.length ? "Your gift cards are ready!" : "Order placed!"}</h2>
+            <p>
+              {orderResult.message ||
+                (orderResult.cards?.length
+                  ? `Vouchers for ${email || "your inbox"} are ready below — copy them anytime.`
+                  : `Bulk order received — we'll check for your gift cards every 30 seconds.`)}
+            </p>
+            <div className="success-ref-pill">Order ref · {orderResult.refno}</div>
           </div>
-          <div className="detail-card">
-            <p style={{ marginBottom: "1rem" }}><strong>Order Ref:</strong> {orderResult.refno}</p>
-            <h4 className="order-cards-title">Your vouchers</h4>
-            {orderResult.cards && orderResult.cards.map((card: any, idx: number) => (
-              <div key={idx} className="voucher-card">
-                <p className="voucher-line">
-                  <strong>Card:</strong> <span className="voucher-code">{card.cardNumber}</span>
-                  <button className="copy-btn" onClick={() => handleCopy(card.cardNumber)}>Copy</button>
-                </p>
-                <p className="voucher-line">
-                  <strong>PIN:</strong> <span className="voucher-code">{card.cardPin}</span>
-                  <button className="copy-btn" onClick={() => handleCopy(card.cardPin)}>Copy</button>
-                </p>
-                {card.activationUrl && (
-                  <p className="voucher-line">
-                    <strong>Activate:</strong>
-                    <a href={card.activationUrl} target="_blank" rel="noreferrer" style={{ color: "var(--brand)", textDecoration: "underline" }}>Open link</a>
-                  </p>
-                )}
-                <p className="voucher-line"><strong>Value:</strong> ₹{card.amount}</p>
-              </div>
-            ))}
+          <div className="detail-card order-success-card">
+            <OrderPurchasedItems items={orderResult.items || []} />
+            {orderResult.cards?.length > 0 && (
+              <VoucherGrid cards={orderResult.cards} items={orderResult.items || []} onCopy={handleCopy} />
+            )}
+            {successPending && (
+              <ProcessingStatusBlock
+                secondsLeft={successPoll.secondsLeft}
+                lastChecked={successPoll.lastChecked}
+                polling={fetchingCodes || successPoll.polling}
+                error={fetchCodesError}
+                onFetchNow={handleFetchCodesOnSuccess}
+                fetchLabel={orderResult.cards?.length ? "Refresh codes now" : "Fetch codes now"}
+              />
+            )}
           </div>
-          <div style={{ display: "flex", gap: "0.8rem", marginTop: "1.5rem" }}>
+          <div className="order-success-actions">
             <Link to="/catalog" className="btn btn-ghost">Keep shopping</Link>
-            <Link to="/orders" className="btn btn-primary">View orders</Link>
+            <Link to="/orders" className="btn btn-primary">View all orders</Link>
           </div>
         </div>
       </div>
@@ -797,7 +841,7 @@ function Cart() {
                       <div className="quantity-selector">
                         <button onClick={() => updateQuantity(item.sku, item.amount, item.quantity - 1)} disabled={item.quantity <= 1} className="qty-btn">−</button>
                         <span className="qty-display">{item.quantity}</span>
-                        <button onClick={() => updateQuantity(item.sku, item.amount, item.quantity + 1)} className="qty-btn">+</button>
+                        <button onClick={() => updateQuantity(item.sku, item.amount, item.quantity + 1)} disabled={item.quantity >= MAX_LINE_QTY} className="qty-btn">+</button>
                       </div>
                       <button className="btn-remove" onClick={() => removeFromCart(item.sku, item.amount)}>Remove</button>
                     </div>
@@ -856,6 +900,43 @@ function OrderSkeleton() {
 function OrderHistory() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const [refreshErrors, setRefreshErrors] = useState<Record<string, string>>({});
+
+  const handleFetchCodes = useCallback(async (orderId: string) => {
+    setRefreshingId(orderId);
+    setRefreshErrors((prev) => {
+      const next = { ...prev };
+      delete next[orderId];
+      return next;
+    });
+    try {
+      const updated = await refreshOrder(orderId);
+      setOrders((prev) => prev.map((o) => (o.orderId === orderId ? updated : o)));
+    } catch (err: any) {
+      setRefreshErrors((prev) => ({
+        ...prev,
+        [orderId]: err.response?.data?.detail || "Could not fetch codes yet. Try again shortly.",
+      }));
+    } finally {
+      setRefreshingId(null);
+    }
+  }, []);
+
+  const pollPendingOrders = useCallback(async () => {
+    const pending = orders.filter(isOrderPending);
+    for (const order of pending) {
+      try {
+        const updated = await refreshOrder(order.orderId);
+        setOrders((prev) => prev.map((o) => (o.orderId === order.orderId ? updated : o)));
+      } catch {
+        // keep polling on next interval
+      }
+    }
+  }, [orders]);
+
+  const hasPending = orders.some(isOrderPending);
+  const poll = useProcessingPoll(hasPending, pollPendingOrders, !loading && orders.length > 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -865,22 +946,9 @@ function OrderHistory() {
         const res = await getOrderHistory();
         if (cancelled) return;
         setOrders(res);
-        setLoading(false);
-
-        const needsRefresh = res.filter(
-          (order) => order.status === "PROCESSING" || !order.cards?.length
-        );
-        if (!needsRefresh.length) return;
-
-        const refreshed = await Promise.all(
-          needsRefresh.map((order) => refreshOrder(order.orderId).catch(() => order))
-        );
-        if (cancelled) return;
-
-        const refreshedById = new Map(refreshed.map((order) => [order.orderId, order]));
-        setOrders((prev) => prev.map((order) => refreshedById.get(order.orderId) ?? order));
       } catch (err) {
         console.error(err);
+      } finally {
         if (!cancelled) setLoading(false);
       }
     };
@@ -895,6 +963,8 @@ function OrderHistory() {
         <h1 className="page-title">Your orders</h1>
         <p className="page-sub">Track delivery and view your gift card details.</p>
 
+        {!loading && orders.length > 0 && <OrdersSummaryBar orders={orders} />}
+
         {loading ? (
           <div className="orders-list">
             {Array.from({ length: 3 }).map((_, i) => <OrderSkeleton key={i} />)}
@@ -908,49 +978,19 @@ function OrderHistory() {
           </div>
         ) : (
           <div className="orders-list">
-            {orders.map((order) => {
-              const total = (order.items || []).reduce((acc, item) => acc + item.amount * item.quantity, 0);
-              const status = (order.status || "PROCESSING").toLowerCase();
-              return (
-                <div key={order.orderId} className="order-card">
-                  <div className="order-head">
-                    <div className="order-meta">
-                      <p className="ref">{order.refno}</p>
-                      <p className="muted">{new Date(order.createdAt).toLocaleString()}</p>
-                      {order.email && <p className="muted">Sent to {order.email}</p>}
-                    </div>
-                    <div className="order-right">
-                      <div className={`status-badge ${status}`}>
-                        {status === "completed" ? "✓ Completed" : status === "failed" ? "✕ Failed" : "⏳ Processing"}
-                      </div>
-                      <div className="order-total">₹{total}</div>
-                    </div>
-                  </div>
-
-                  <h4 className="order-cards-title">Gift cards</h4>
-                  {order.cards && order.cards.length > 0 ? (
-                    order.cards.map((card, idx) => (
-                      <div key={idx} className="voucher-card">
-                        <p className="voucher-line"><strong>Card:</strong> <span className="voucher-code">{card.cardNumber}</span></p>
-                        <p className="voucher-line"><strong>PIN:</strong> <span className="voucher-code">{card.cardPin}</span></p>
-                        {card.activationUrl && (
-                          <p className="voucher-line">
-                            <strong>Activate:</strong>
-                            <a href={card.activationUrl} target="_blank" rel="noreferrer" style={{ color: "var(--brand)", textDecoration: "underline" }}>Open link</a>
-                          </p>
-                        )}
-                        <p className="voucher-line"><strong>Value:</strong> ₹{card.amount} · {card.status || "Active"}</p>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="processing-note">
-                      <span className="spinner" />
-                      Cards are being generated. This usually takes a few moments.
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {orders.map((order) => (
+              <OrderDetailBlock
+                key={order.orderId}
+                order={order}
+                onCopy={copyToClipboard}
+                onFetchCodes={() => handleFetchCodes(order.orderId)}
+                refreshing={refreshingId === order.orderId}
+                fetchError={refreshErrors[order.orderId]}
+                pollSeconds={poll.secondsLeft}
+                pollLastChecked={poll.lastChecked}
+                pollActive={hasPending && isOrderPending(order)}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -967,10 +1007,12 @@ function App() {
       const existing = prev.find((i) => i.sku === item.sku && i.amount === item.amount);
       if (existing) {
         return prev.map((i) =>
-          i.sku === item.sku && i.amount === item.amount ? { ...i, quantity: i.quantity + item.quantity } : i
+          i.sku === item.sku && i.amount === item.amount
+            ? { ...i, quantity: Math.min(MAX_LINE_QTY, i.quantity + item.quantity) }
+            : i
         );
       }
-      return [...prev, item];
+      return [...prev, { ...item, quantity: Math.min(MAX_LINE_QTY, item.quantity) }];
     });
   };
 
@@ -979,7 +1021,8 @@ function App() {
   };
 
   const updateQuantity = (sku: string, amount: number, quantity: number) => {
-    setCart((prev) => prev.map((i) => (i.sku === sku && i.amount === amount ? { ...i, quantity } : i)));
+    const qty = Math.min(MAX_LINE_QTY, Math.max(1, quantity));
+    setCart((prev) => prev.map((i) => (i.sku === sku && i.amount === amount ? { ...i, quantity: qty } : i)));
   };
 
   const clearCart = () => setCart([]);

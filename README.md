@@ -1,30 +1,31 @@
 # Giftcred
 
-Gift credits that turn into real gift cards from top brands — React storefront + FastAPI backend + Woohoo/Qwikcilver catalog & orders.
+Gift credits that turn into real gift cards from top brands — React storefront + Express API + Woohoo/Qwikcilver catalog & orders.
+
+**Everything deploys on Vercel** (frontend static build + Express serverless API).
 
 ## Repository layout
 
 ```
 giftcred/
-├── frontend/          # React + Vite (deploy to Vercel)
-├── backend/           # FastAPI + PostgreSQL (deploy separately)
-├── DEPLOYMENT.md      # ← Start here for production setup
-└── README.md
+├── api/                 # Express API (deployed on Vercel serverless)
+├── frontend/            # React + Vite storefront
+├── backend-python/      # Original FastAPI code (reference only)
+├── vercel.json          # Monorepo deploy config
+└── DEPLOYMENT.md
 ```
 
 ## Quick start (local)
 
-**Backend** (port 8000):
+**Terminal 1 — API** (port 8000):
 
 ```bash
-cd backend
-python -m venv .venv && .\.venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env   # set DATABASE_URL + Woohoo credentials
-uvicorn main:app --reload --host 127.0.0.1 --port 8000
+npm install
+copy .env.example .env    # set DATABASE_URL + Woohoo credentials
+npm run dev:api
 ```
 
-**Frontend** (port 5173):
+**Terminal 2 — Frontend** (port 5173):
 
 ```bash
 cd frontend
@@ -32,22 +33,21 @@ npm install
 npm run dev
 ```
 
-## Production deployment
+The Vite dev server proxies `/api` → `http://127.0.0.1:8000`.
 
-**Read [DEPLOYMENT.md](./DEPLOYMENT.md)** — it covers:
+## Deploy on Vercel
 
-- Vercel frontend setup (`VITE_API_URL`, root directory, build fixes)
-- Backend hosting (Railway/Render/VPS)
-- Remote PostgreSQL (`DATABASE_URL` only — no local DB)
-- Sandbox → production Woohoo credential changes
-- CORS, pinned SKUs, and pre-deploy checklist
+1. Push this repo to GitHub.
+2. Import the project in [Vercel](https://vercel.com) — **root directory = repo root** (not `frontend/`).
+3. Add environment variables from `.env.example` in **Vercel → Settings → Environment Variables**.
+4. Deploy.
 
-### TL;DR
+No `VITE_API_URL` needed when frontend and API share the same Vercel domain — the app calls `/api` on the same host.
 
-| Piece | Host | Key config |
-|-------|------|------------|
-| Frontend | **Vercel** | Root: `frontend`, env: `VITE_API_URL=https://your-api.com/api` |
-| Backend | **Railway / Render / VPS** | `backend/.env` from `.env.example` |
-| Database | **Managed Postgres** | `DATABASE_URL` |
+You still need a **remote PostgreSQL** database (`DATABASE_URL`). Use [Neon](https://neon.tech), [Supabase](https://supabase.com), or Vercel Postgres.
 
-The Python API **cannot** run on Vercel.
+See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for the full checklist.
+
+## Python reference
+
+The original FastAPI backend lives in `backend-python/` and is not used in production. See `backend-python/README.md`.

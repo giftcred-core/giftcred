@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
+// Same-origin /api when frontend + API are deployed together on Vercel
+const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
 export interface GiftCard {
     cardNumber: string;
@@ -16,6 +17,7 @@ export interface OrderItem {
     sku: string;
     amount: number;
     quantity: number;
+    brandName?: string;
 }
 
 export interface Order {
@@ -40,7 +42,7 @@ export const getProduct = async (sku: string): Promise<any> => {
 };
 
 export const placePurchaseOrder = async (orderData: {
-  items: { sku: string; amount: number; quantity: number }[];
+  items: { sku: string; amount: number; quantity: number; brandName?: string }[];
   mobileNumber: string;
   email: string;
   message?: string;
