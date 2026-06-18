@@ -52,3 +52,8 @@ export const getOrderHistory = async (): Promise<Order[]> => {
   const response = await axios.get(`${API_BASE}/orders`);
   return response.data;
 };
+
+export const refreshOrder = async (orderId: string): Promise<Order> => {
+  const response = await axios.post(`${API_BASE}/orders/${orderId}/refresh`);
+  return response.data;
+};

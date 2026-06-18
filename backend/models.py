@@ -28,7 +28,8 @@ class OAuthToken(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     access_token: Mapped[str] = mapped_column(String(512), nullable=False)
-    access_token_secret: Mapped[str] = mapped_column(String(512), nullable=False)
+    access_token_secret: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
@@ -85,7 +86,9 @@ class Order(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     order_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     refno: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
-    items: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True) # Will store list of items
+    items: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     mobile_number: Mapped[str] = mapped_column(String(32), nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="PROCESSING", nullable=False)
+    cards: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSON, nullable=True)
 

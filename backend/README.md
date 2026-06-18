@@ -1,11 +1,12 @@
 # Woohoo Catalog Sync Service
 
-Production-ready Python CLI that authenticates with the **Woohoo/Qwikcilver Sandbox** using **OAuth 1.0a**, downloads the complete catalog (categories + recursive subcategories), saves raw API responses for debugging, and persists everything in **PostgreSQL**.
+Production-ready Python CLI that authenticates with the **Woohoo/Qwikcilver Sandbox** using **OAuth 2.0** (verify → token → HMAC-SHA512 signed REST), downloads the complete catalog (categories + recursive subcategories), saves raw API responses for debugging, and persists everything in **PostgreSQL**.
 
 ## Features
 
-- Full OAuth 1.0a three-legged flow (request token → authorize → access token)
-- Token persistence in `oauth_tokens` table (reuse on subsequent runs)
+- OAuth 2.0 flow: `POST /oauth2/verify` then `POST /oauth2/token`
+- Bearer token persistence in `oauth_tokens` table (reuse until expiry)
+- HMAC-SHA512 request signing (`Authorization`, `dateAtClient`, `signature` headers)
 - Catalog fetch from `/rest/v3/catalog/categories`
 - Recursive subcategory fetch (nested response + `/categories/{id}/subcategories`)
 - Raw JSON responses saved to `responses/`
@@ -62,24 +63,10 @@ WOOHOO_CONSUMER_SECRET=your_consumer_secret
 WOOHOO_USERNAME=your_username
 WOOHOO_PASSWORD=your_password
 
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=woohoo_catalog
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=your_password
+DATABASE_URL=postgres://user:password@host:5432/dbname
 ```
 
-### 3. Create PostgreSQL database
-
-```sql
-CREATE DATABASE woohoo_catalog;
-```
-
-Apply schema (optional — `sync_catalog.py` also creates tables via SQLAlchemy):
-
-```powershell
-psql -U postgres -d woohoo_catalog -f schema.sql
-```
+The app accepts standard `postgres://` or `postgresql://` URLs. Tables are created automatically on startup via SQLAlchemy.
 
 ## Usage
 
@@ -116,18 +103,14 @@ If `/rest/v3/catalog/categories` returns `401`:
 
 ## OAuth Flow
 
-| Step | Method | URL |
-|------|--------|-----|
-| 1. Request Token | `GET` | `https://sandbox.woohoo.in/oauth/initiate?oauth_callback=oob` |
-| 2. Authorize | `POST` | `https://sandbox.woohoo.in/oauth/authorize/customerVerifier?oauth_token=<token>` |
-| 3. Access Token | `POST` | `https://sandbox.woohoo.in/oauth/token` |
+| Step | Method | URL | Body |
+|------|--------|-----|------|
+| 1. Verify | `POST` | `/oauth2/verify` | `{clientId, username, password}` |
+| 2. Token | `POST` | `/oauth2/token` | `{clientId, clientSecret, authorizationCode}` |
+| 3. API calls | any | `/rest/v3/...` | Bearer + `dateAtClient` + HMAC-SHA512 `signature` |
 
-Step 2 body (`application/x-www-form-urlencoded`):
-
-```
-username=<WOOHOO_USERNAME>
-password=<WOOHOO_PASSWORD>
-```
+`WOOHOO_CONSUMER_KEY` / `WOOHOO_CONSUMER_SECRET` are the API clientId/clientSecret.  
+`WOOHOO_USERNAME` / `WOOHOO_PASSWORD` are the sandbox login used in step 1.
 
 ## Database Tables
 
@@ -152,7 +135,7 @@ SELECT * FROM oauth_tokens WHERE is_active = TRUE;
 | Issue | Action |
 |-------|--------|
 | Missing credentials | Ensure `.env` exists with all four Woohoo variables |
-| DB connection error | Verify PostgreSQL is running and credentials match |
+| DB connection error | Verify `DATABASE_URL` is correct and the database is reachable |
 | OAuth signature invalid | Confirm consumer key/secret and sandbox base URL |
 | Catalog 401 | Check debug 401 analysis output; re-run sync to refresh token |
 | Empty subcategories | Some categories may only expose nested data in the main categories response |

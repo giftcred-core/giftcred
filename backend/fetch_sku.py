@@ -5,14 +5,11 @@ from woohoo_client import WoohooClient
 def fetch_sku(sku: str):
     client = WoohooClient()
     with get_session() as session:
-        token = client.authenticate(session)
+        client.authenticate(session)
         
-        url = f"{client.base_url}/rest/v3/catalog/products/{sku}"
-        
-        response = client._catalog_request(
+        response = client.api_request(
             "GET", 
-            url, 
-            token=token, 
+            f"/rest/v3/catalog/products/{sku}",
             step_name=f"fetch_product_{sku}"
         )
         

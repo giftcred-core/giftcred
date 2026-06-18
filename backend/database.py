@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from typing import Generator, Optional
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -17,7 +17,7 @@ def _init_engine() -> sessionmaker[Session]:
     if _SessionLocal is None:
         settings = get_settings()
         _engine = create_engine(
-            settings.database_url,
+            settings.sqlalchemy_database_url,
             echo=False,
             pool_pre_ping=True,
         )
@@ -29,6 +29,25 @@ def init_db() -> None:
     _init_engine()
     assert _engine is not None
     Base.metadata.create_all(bind=_engine)
+    with _engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE oauth_tokens "
+                "ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE oauth_tokens "
+                "ALTER COLUMN access_token_secret DROP NOT NULL"
+            )
+        )
+        conn.execute(
+            text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS status VARCHAR(32) DEFAULT 'PROCESSING'")
+        )
+        conn.execute(
+            text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS cards JSONB")
+        )
 
 
 @contextmanager
