@@ -39,6 +39,7 @@ export const config = {
   signatureJsonPretty: process.env.WOOHOO_SIGNATURE_JSON_PRETTY === "true",
   requestTimeoutMs: Number(process.env.WOOHOO_REQUEST_TIMEOUT || 60) * 1000,
   databaseUrl: () => requireEnv("DATABASE_URL"),
+  authSecret: () => optionalEnv("AUTH_SECRET", "dev-change-me-in-production"),
   corsOrigins: () => {
     const raw = process.env.CORS_ORIGINS?.trim();
     if (!raw) return ["*"];

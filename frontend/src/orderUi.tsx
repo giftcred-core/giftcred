@@ -1,21 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { getProduct, type GiftCard, type Order, type OrderItem } from "./api";
+import { getProduct, asArray, type GiftCard, type Order, type OrderItem } from "./api";
 
 export const ORDER_POLL_SECONDS = 30;
 
-export function isOrderPending(order: { status?: string; cards?: GiftCard[] }) {
+export function isOrderPending(order: { status?: string; cards?: GiftCard[] | unknown }) {
   const status = (order.status || "PROCESSING").toLowerCase();
   if (status === "failed") return false;
   // "Delivered" only when the user can actually see the codes.
-  return !order.cards?.length;
+  return !asArray<GiftCard>(order.cards).length;
 }
 
 // Order is only "delivered" when codes are visible to the user.
-export function displayStatus(order: { status?: string; cards?: GiftCard[] }) {
+export function displayStatus(order: { status?: string; cards?: GiftCard[] | unknown }) {
   const raw = (order.status || "PROCESSING").toLowerCase();
   if (raw === "failed") return "failed";
-  if (order.cards?.length) return "completed";
+  if (asArray<GiftCard>(order.cards).length) return "completed";
   return "processing";
 }
 
@@ -53,6 +53,11 @@ function brandInitials(name: string) {
 function formatCardNumber(num: string) {
   if (!num || num === "N/A") return num;
   return num.replace(/\s+/g, "").replace(/(.{4})/g, "$1 ").trim();
+}
+
+function hasCodeValue(value: string | undefined | null): boolean {
+  const v = (value ?? "").trim();
+  return Boolean(v && v !== "N/A");
 }
 
 export function useProcessingPoll(
@@ -160,19 +165,21 @@ interface BrandGroup {
 }
 
 function groupCardsByBrand(cards: VoucherCard[], items: OrderItem[]): BrandGroup[] {
-  const uniqueSkus = [...new Set(items.map((i) => i.sku))];
+  const safeCards = asArray<VoucherCard>(cards);
+  const safeItems = asArray<OrderItem>(items);
+  const uniqueSkus = [...new Set(safeItems.map((i) => i.sku))];
   const groups = new Map<string, BrandGroup>();
 
   const findItem = (card: VoucherCard) => {
     if (card.sku) {
-      const bySku = items.find((i) => i.sku === card.sku);
+      const bySku = safeItems.find((i) => i.sku === card.sku);
       if (bySku) return bySku;
     }
     const amt = parseFloat(String(card.amount));
-    return items.find((i) => i.amount === amt);
+    return safeItems.find((i) => i.amount === amt);
   };
 
-  for (const card of cards) {
+  for (const card of safeCards) {
     let brand = card.brandName || card.productName;
     let sku = card.sku;
 
@@ -181,9 +188,9 @@ function groupCardsByBrand(cards: VoucherCard[], items: OrderItem[]): BrandGroup
       if (!brand) brand = match.brandName || match.sku;
       if (!sku) sku = match.sku;
     }
-    if (!brand && uniqueSkus.length === 1 && items[0]) {
-      brand = items[0].brandName || items[0].sku;
-      sku = sku || items[0].sku;
+    if (!brand && uniqueSkus.length === 1 && safeItems[0]) {
+      brand = safeItems[0].brandName || safeItems[0].sku;
+      sku = sku || safeItems[0].sku;
     }
     if (!brand) brand = "Gift Cards";
 
@@ -204,9 +211,10 @@ function BrandVoucherCard({
   group: BrandGroup;
   onCopy: (text: string) => void;
 }) {
-  const { brand, sku, cards } = group;
+  const { brand, sku, cards: rawCards } = group;
+  const cards = asArray<VoucherCard>(rawCards);
   const multi = cards.length > 1;
-  const totalValue = cards.reduce((acc, c) => acc + (parseFloat(String(c.amount)) || 0), 0);
+  const totalValue = cards.reduce((acc, c) => acc + (parseFloat(String(c?.amount)) || 0), 0);
 
   const [expanded, setExpanded] = useState(cards.length <= COUPONS_PREVIEW);
   const [showRedeem, setShowRedeem] = useState(false);
@@ -254,15 +262,19 @@ function BrandVoucherCard({
         {visibleCards.map((card, idx) => (
           <div key={idx} className="coupon">
             {multi && <span className="coupon-num">Card {idx + 1}</span>}
-            <CodeField label="Card number" value={card.cardNumber} onCopy={onCopy} format />
-            <CodeField label="PIN" value={card.cardPin} onCopy={onCopy} />
-            {card.activationCode && card.activationCode !== "N/A" && (
-              <CodeField label="Activation code" value={card.activationCode} onCopy={onCopy} />
+            {hasCodeValue(card?.cardNumber) && (
+              <CodeField label="Card number" value={card!.cardNumber} onCopy={onCopy} format />
+            )}
+            {hasCodeValue(card?.cardPin) && (
+              <CodeField label="PIN" value={card!.cardPin} onCopy={onCopy} />
+            )}
+            {hasCodeValue(card?.activationCode) && (
+              <CodeField label="Activation code" value={card!.activationCode!} onCopy={onCopy} />
             )}
             <div className="coupon-foot">
-              <span className="coupon-value">₹{card.amount}</span>
-              {card.validity && <span className="coupon-validity">Valid till {card.validity}</span>}
-              {card.activationUrl && (
+              <span className="coupon-value">₹{card?.amount ?? "—"}</span>
+              {card?.validity && <span className="coupon-validity">Valid till {card.validity}</span>}
+              {card?.activationUrl && (
                 <a href={card.activationUrl} target="_blank" rel="noreferrer" className="coupon-activate">
                   Activate →
                 </a>
@@ -316,12 +328,14 @@ export function VoucherGrid({
   items = [],
   onCopy,
 }: {
-  cards: VoucherCard[];
-  items?: OrderItem[];
+  cards: VoucherCard[] | unknown;
+  items?: OrderItem[] | unknown;
   onCopy: (text: string) => void;
 }) {
-  const groups = useMemo(() => groupCardsByBrand(cards, items), [cards, items]);
-  if (!cards.length) return null;
+  const safeCards = asArray<VoucherCard>(cards);
+  const safeItems = asArray<OrderItem>(items);
+  const groups = useMemo(() => groupCardsByBrand(safeCards, safeItems), [safeCards, safeItems]);
+  if (!safeCards.length) return null;
 
   return (
     <div className="voucher-section">
@@ -334,24 +348,25 @@ export function VoucherGrid({
   );
 }
 
-export function OrderPurchasedItems({ items }: { items: OrderItem[] }) {
-  if (!items?.length) return null;
+export function OrderPurchasedItems({ items }: { items: OrderItem[] | unknown }) {
+  const safeItems = asArray<OrderItem>(items);
+  if (!safeItems.length) return null;
   return (
     <div className="order-purchased">
       <h4 className="order-section-title">What you bought</h4>
       <ul className="order-items-list">
-        {items.map((item, idx) => {
-          const name = item.brandName || item.sku;
+        {safeItems.map((item, idx) => {
+          const name = item?.brandName || item?.sku || "Gift card";
           return (
-            <li key={`${item.sku}-${item.amount}-${idx}`} className="order-item-row">
+            <li key={`${item?.sku}-${item?.amount}-${idx}`} className="order-item-row">
               <span className="order-item-avatar" style={{ background: brandGradient(name) }}>
                 {brandInitials(name)}
               </span>
-              <Link to={`/product/${item.sku}`} className="order-item-main">
+              <Link to={`/product/${item?.sku ?? ""}`} className="order-item-main">
                 <span className="order-item-brand">{name}</span>
-                <span className="order-item-meta">₹{item.amount} × {item.quantity}</span>
+                <span className="order-item-meta">₹{item?.amount ?? 0} × {item?.quantity ?? 0}</span>
               </Link>
-              <span className="order-item-sub">₹{item.amount * item.quantity}</span>
+              <span className="order-item-sub">₹{(item?.amount ?? 0) * (item?.quantity ?? 0)}</span>
             </li>
           );
         })}
@@ -466,10 +481,11 @@ export function OrderDetailBlock({
   pollLastChecked: Date | null;
   pollActive: boolean;
 }) {
-  const total = (order.items || []).reduce((acc, item) => acc + item.amount * item.quantity, 0);
+  const items = asArray<OrderItem>(order.items);
+  const cards = asArray<VoucherCard>(order.cards);
+  const total = items.reduce((acc, item) => acc + (item?.amount ?? 0) * (item?.quantity ?? 0), 0);
   const status = displayStatus(order);
   const pending = isOrderPending(order);
-  const cards = (order.cards || []) as VoucherCard[];
   const meta = statusMeta(status);
 
   return (
@@ -491,11 +507,11 @@ export function OrderDetailBlock({
 
       <OrderTimeline status={status} />
 
-      <OrderPurchasedItems items={order.items || []} />
+      <OrderPurchasedItems items={items} />
 
       {cards.length > 0 ? (
         <>
-          <VoucherGrid cards={cards} items={order.items || []} onCopy={onCopy} />
+          <VoucherGrid cards={cards} items={items} onCopy={onCopy} />
           {pending && pollActive && (
             <ProcessingStatusBlock
               secondsLeft={pollSeconds}
@@ -522,10 +538,10 @@ export function OrderDetailBlock({
 
 export function OrdersSummaryBar({ orders }: { orders: Order[] }) {
   const totalSpent = orders.reduce(
-    (acc, o) => acc + (o.items || []).reduce((s, i) => s + i.amount * i.quantity, 0),
+    (acc, o) => acc + asArray<OrderItem>(o.items).reduce((s, i) => s + (i?.amount ?? 0) * (i?.quantity ?? 0), 0),
     0
   );
-  const totalCards = orders.reduce((acc, o) => acc + (o.cards?.length || 0), 0);
+  const totalCards = orders.reduce((acc, o) => acc + asArray<GiftCard>(o.cards).length, 0);
   const pending = orders.filter(isOrderPending).length;
 
   return (

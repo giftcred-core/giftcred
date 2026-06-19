@@ -1,7 +1,7 @@
-import axios from 'axios';
+import { apiClient } from './authApi';
+import { asArray, asNumberArray } from './util/array';
 
-// Same-origin /api when frontend + API are deployed together on Vercel
-const API_BASE = import.meta.env.VITE_API_URL || "/api";
+export { asArray, asNumberArray } from './util/array';
 
 export interface GiftCard {
     cardNumber: string;
@@ -31,14 +31,41 @@ export interface Order {
     cards: GiftCard[];
 }
 
+function normalizeOrder(raw: Record<string, unknown>): Order {
+  return {
+    ...(raw as unknown as Order),
+    items: asArray<OrderItem>(raw.items),
+    cards: asArray<GiftCard>(raw.cards),
+  };
+}
+
+function normalizeProduct(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Record<string, unknown>;
+  const price = p.price as Record<string, unknown> | undefined;
+  return {
+    ...p,
+    importantPoints: asArray<string>(p.importantPoints),
+    price: price
+      ? {
+          ...price,
+          type: String(price.type ?? "RANGE"),
+          min: Number(price.min ?? 10),
+          max: Number(price.max ?? 10000),
+          denominations: asNumberArray(price.denominations),
+        }
+      : undefined,
+  };
+}
+
 export const getCatalog = async (): Promise<any[]> => {
-  const response = await axios.get(`${API_BASE}/catalog`);
-  return response.data;
+  const response = await apiClient.get("/catalog");
+  return asArray(response.data);
 };
 
-export const getProduct = async (sku: string): Promise<any> => {
-  const response = await axios.get(`${API_BASE}/catalog/${sku}`);
-  return response.data;
+export const getProduct = async (sku: string): Promise<any | null> => {
+  const response = await apiClient.get(`/catalog/${sku}`);
+  return normalizeProduct(response.data);
 };
 
 export const placePurchaseOrder = async (orderData: {
@@ -47,16 +74,22 @@ export const placePurchaseOrder = async (orderData: {
   email: string;
   message?: string;
 }) => {
-  const response = await axios.post(`${API_BASE}/purchase`, orderData);
-  return response.data;
+  const { email: _email, ...payload } = orderData;
+  const response = await apiClient.post("/purchase", payload);
+  const data = response.data as Record<string, unknown>;
+  return {
+    ...data,
+    success: Boolean(data?.success ?? true),
+    cards: asArray<GiftCard>(data?.cards),
+  };
 };
 
 export const getOrderHistory = async (): Promise<Order[]> => {
-  const response = await axios.get(`${API_BASE}/orders`);
-  return response.data;
+  const response = await apiClient.get("/orders");
+  return asArray<Record<string, unknown>>(response.data).map(normalizeOrder);
 };
 
 export const refreshOrder = async (orderId: string): Promise<Order> => {
-  const response = await axios.post(`${API_BASE}/orders/${orderId}/refresh`);
-  return response.data;
+  const response = await apiClient.post(`/orders/${orderId}/refresh`);
+  return normalizeOrder(response.data as Record<string, unknown>);
 };

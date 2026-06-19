@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { WoohooClient } from "../woohoo/client.js";
+import { asJsonArray } from "../util/array.js";
 
 export interface OrderRow {
   order_id: string;
@@ -16,12 +17,12 @@ export function orderToDict(order: OrderRow) {
   return {
     orderId: order.order_id,
     refno: order.refno,
-    items: (order.items as unknown[]) || [],
+    items: asJsonArray(order.items),
     mobileNumber: order.mobile_number,
     email: order.email,
     createdAt: order.created_at.toISOString(),
     status: order.status || "PROCESSING",
-    cards: (order.cards as unknown[]) || [],
+    cards: asJsonArray(order.cards),
   };
 }
 
@@ -42,8 +43,8 @@ export async function refreshOrderCards(
 
   let cardsData: unknown[] = [];
   if (response.statusCode === 200) {
-    const apiData = JSON.parse(response.body) as { cards?: unknown[] };
-    cardsData = apiData.cards || [];
+    const apiData = JSON.parse(response.body) as { cards?: unknown };
+    cardsData = asJsonArray(apiData.cards);
   }
 
   const status = statusFromResponse(response.statusCode);
@@ -57,12 +58,26 @@ export async function refreshOrderCards(
   return order;
 }
 
-export async function getOrders(client: PoolClient): Promise<OrderRow[]> {
+export async function getOrdersByUserId(client: PoolClient, userId: number): Promise<OrderRow[]> {
   const result = await client.query<OrderRow>(
     `SELECT order_id, refno, items, mobile_number, email, created_at, status, cards
-     FROM orders ORDER BY id DESC`
+     FROM orders WHERE user_id = $1 ORDER BY id DESC`,
+    [userId]
   );
   return result.rows;
+}
+
+export async function getOrderByIdForUser(
+  client: PoolClient,
+  orderId: string,
+  userId: number
+): Promise<OrderRow | null> {
+  const result = await client.query<OrderRow>(
+    `SELECT order_id, refno, items, mobile_number, email, created_at, status, cards
+     FROM orders WHERE order_id = $1 AND user_id = $2`,
+    [orderId, userId]
+  );
+  return result.rows[0] ?? null;
 }
 
 export async function getOrderById(client: PoolClient, orderId: string): Promise<OrderRow | null> {
@@ -84,11 +99,12 @@ export async function saveOrder(
     email: string;
     status: string;
     cards: unknown[] | null;
+    userId: number;
   }
 ): Promise<void> {
   await client.query(
-    `INSERT INTO orders (order_id, refno, items, mobile_number, email, status, cards)
-     VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7::jsonb)`,
+    `INSERT INTO orders (order_id, refno, items, mobile_number, email, status, cards, user_id)
+     VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7::jsonb, $8)`,
     [
       data.orderId,
       data.refno,
@@ -97,6 +113,7 @@ export async function saveOrder(
       data.email,
       data.status,
       data.cards ? JSON.stringify(data.cards) : null,
+      data.userId,
     ]
   );
 }

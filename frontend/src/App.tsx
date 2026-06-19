@@ -1,7 +1,10 @@
 import { BrowserRouter as Router, Routes, Route, Link, NavLink, useParams, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useState, createContext, useContext, useMemo } from "react";
-import { getCatalog, placePurchaseOrder, getOrderHistory, getProduct, refreshOrder } from "./api";
+import { getCatalog, placePurchaseOrder, getOrderHistory, getProduct, refreshOrder, asArray } from "./api";
 import type { Order } from "./api";
+import { AuthProvider, ProtectedRoute, useAuth } from "./auth";
+import { AuthPage } from "./AuthPage";
+import { loadStoredCart, saveStoredCart, clearStoredCart } from "./cartStorage";
 import {
   copyToClipboard,
   isOrderPending,
@@ -107,6 +110,7 @@ const fallbackImg = (brand: string, w = 400, h = 250) =>
 function Navbar() {
   const { cart } = useCart();
   const { theme, toggle } = useTheme();
+  const { user, logout } = useAuth();
   const totalItems = cart.reduce((acc, item) => acc + item.quantity, 0);
 
   return (
@@ -120,13 +124,23 @@ function Navbar() {
         <div className="nav-links">
           <NavLink to="/" end className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>Home</NavLink>
           <NavLink to="/catalog" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>Browse</NavLink>
-          <NavLink to="/orders" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>Orders</NavLink>
+          {user && (
+            <NavLink to="/orders" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>Orders</NavLink>
+          )}
         </div>
 
         <div className="nav-actions">
           <button className="icon-btn" onClick={toggle} aria-label="Toggle theme" title="Toggle theme">
             {theme === "light" ? "🌙" : "☀️"}
           </button>
+          {user ? (
+            <>
+              <span className="nav-user" title={user.email}>{user.email.split("@")[0]}</span>
+              <button type="button" className="btn btn-ghost btn-sm nav-signout" onClick={logout}>Sign out</button>
+            </>
+          ) : (
+            <Link to="/login" className="btn btn-ghost btn-sm">Sign in</Link>
+          )}
           <Link to="/cart" className="icon-btn cart-btn" aria-label="Cart">
             🛒
             {totalItems > 0 && <span className="cart-count">{totalItems}</span>}
@@ -191,11 +205,11 @@ function Landing() {
   const [products, setProducts] = useState<Product[]>([]);
 
   useEffect(() => {
-    getCatalog().then((res) => setProducts(res)).catch((e) => console.error(e));
+    getCatalog().then((res) => setProducts(asArray<Product>(res))).catch((e) => console.error(e));
   }, []);
 
   const featured = products.slice(0, 8);
-  const brandNames = products.slice(0, 14).map((p) => p.brandName);
+  const brandNames = products.slice(0, 14).map((p) => p?.brandName ?? "");
 
   return (
     <>
@@ -281,7 +295,7 @@ function Landing() {
           <div className="grid">
             {featured.length === 0
               ? Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)
-              : featured.map((p) => <FeaturedCard key={p.sku} product={p} />)}
+              : featured.map((p, i) => <FeaturedCard key={p?.sku ?? `featured-${i}`} product={p} />)}
           </div>
           <div style={{ textAlign: "center", marginTop: "2.5rem" }}>
             <Link to="/catalog" className="btn btn-outline btn-lg">Explore full catalogue →</Link>
@@ -424,24 +438,24 @@ function Catalogue() {
 
   useEffect(() => {
     getCatalog()
-      .then((res) => setProducts(res))
+      .then((res) => setProducts(asArray<Product>(res)))
       .catch((e) => console.error(e))
       .finally(() => setLoading(false));
   }, []);
 
   const categories = useMemo(() => {
     const set = new Set<string>();
-    products.forEach((p) => p.category && set.add(p.category));
+    products.forEach((p) => p?.category && set.add(p.category));
     return ["All", ...Array.from(set).sort()];
   }, [products]);
 
   const filtered = useMemo(() => {
     return products.filter((p) => {
-      const matchesCat = category === "All" || p.category === category;
+      const matchesCat = category === "All" || p?.category === category;
       const matchesQuery =
         !query ||
-        p.brandName.toLowerCase().includes(query.toLowerCase()) ||
-        (p.category || "").toLowerCase().includes(query.toLowerCase());
+        (p?.brandName ?? "").toLowerCase().includes(query.toLowerCase()) ||
+        (p?.category ?? "").toLowerCase().includes(query.toLowerCase());
       return matchesCat && matchesQuery;
     });
   }, [products, query, category]);
@@ -490,7 +504,7 @@ function Catalogue() {
           </div>
         ) : (
           <div className="grid">
-            {filtered.map((p) => <FeaturedCard key={p.sku} product={p} />)}
+            {filtered.map((p, i) => <FeaturedCard key={p?.sku ?? `product-${i}`} product={p} />)}
           </div>
         )}
       </div>
@@ -512,7 +526,9 @@ function ProductDetail() {
 
   useEffect(() => {
     if (sku) {
-      getProduct(sku).then((res) => setProduct(res)).catch((err) => console.error(err));
+      getProduct(sku)
+        .then((res) => setProduct(res ? (res as Product) : null))
+        .catch((err) => console.error(err));
     }
   }, [sku]);
 
@@ -533,7 +549,8 @@ function ProductDetail() {
     );
   }
 
-  const priceObj = product.price || { type: "RANGE", min: 10, max: 10000, denominations: [] };
+  const priceObj = product.price || { type: "RANGE", min: 10, max: 10000, denominations: [] as number[] };
+  const denominations = asArray<number>(priceObj.denominations);
   const isFixed = priceObj.type === "FIXED" || priceObj.type === "SLAB";
 
   const handleAddToCart = (redirect: boolean) => {
@@ -568,12 +585,12 @@ function ProductDetail() {
   const discountedAmount = payAmount - (payAmount * parseFloat(product.discount) / 100);
 
   const denoms = isFixed
-    ? priceObj.denominations
+    ? denominations
     : [100, 200, 500, 1000].filter(
         (d) =>
           d >= priceObj.min &&
           d <= priceObj.max &&
-          (!priceObj.denominations || priceObj.denominations.length === 0 || priceObj.denominations.includes(d))
+          (denominations.length === 0 || denominations.includes(d))
       );
 
   return (
@@ -702,14 +719,16 @@ function ProductDetail() {
 // --- Cart ---
 function Cart() {
   const { cart, removeFromCart, updateQuantity, clearCart } = useCart();
+  const { user } = useAuth();
 
   const [mobile, setMobile] = useState<string>("");
-  const [email, setEmail] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [orderResult, setOrderResult] = useState<any>(null);
   const [fetchingCodes, setFetchingCodes] = useState(false);
   const [fetchCodesError, setFetchCodesError] = useState("");
+
+  const email = user?.email ?? "";
 
   const totalPayable = cart.reduce((acc, item) => {
     const payAmt = item.amount * item.quantity;
@@ -720,7 +739,7 @@ function Cart() {
   const handleCheckout = async () => {
     setError("");
     if (!mobile || mobile.length < 10) return setError("Please enter a valid 10-digit mobile number.");
-    if (!email || !email.includes("@")) return setError("Please enter a valid email address.");
+    if (!email) return setError("Please sign in to place an order.");
 
     setLoading(true);
     const purchasedItems = cart.map((i) => ({
@@ -736,7 +755,11 @@ function Cart() {
         email: email
       });
       if (data.success) {
-        setOrderResult({ ...data, items: purchasedItems });
+        setOrderResult({
+          ...data,
+          items: asArray(purchasedItems),
+          cards: asArray(data.cards),
+        });
         clearCart();
       } else {
         setError("Checkout failed. Please try again.");
@@ -758,7 +781,7 @@ function Cart() {
       const updated = await refreshOrder(orderResult.orderId);
       setOrderResult((prev: any) => ({
         ...prev,
-        cards: updated.cards,
+        cards: asArray(updated.cards),
         status: updated.status,
       }));
     } catch (err: any) {
@@ -768,7 +791,9 @@ function Cart() {
     }
   }, [orderResult?.orderId]);
 
-  const successPending = orderResult && isOrderPending(orderResult);
+  const successCards = asArray(orderResult?.cards);
+  const successItems = asArray(orderResult?.items);
+  const successPending = orderResult && isOrderPending({ ...orderResult, cards: successCards });
   const successPoll = useProcessingPoll(!!successPending, handleFetchCodesOnSuccess, !!orderResult?.orderId);
 
   if (orderResult) {
@@ -777,19 +802,19 @@ function Cart() {
         <div className="container order-success-wrap">
           <div className="success-hero">
             <div className="check">✓</div>
-            <h2>{orderResult.cards?.length ? "Your gift cards are ready!" : "Order placed!"}</h2>
+            <h2>{successCards.length ? "Your gift cards are ready!" : "Order placed!"}</h2>
             <p>
               {orderResult.message ||
-                (orderResult.cards?.length
+                (successCards.length
                   ? `Vouchers for ${email || "your inbox"} are ready below — copy them anytime.`
                   : `Bulk order received — we'll check for your gift cards every 30 seconds.`)}
             </p>
             <div className="success-ref-pill">Order ref · {orderResult.refno}</div>
           </div>
           <div className="detail-card order-success-card">
-            <OrderPurchasedItems items={orderResult.items || []} />
-            {orderResult.cards?.length > 0 && (
-              <VoucherGrid cards={orderResult.cards} items={orderResult.items || []} onCopy={handleCopy} />
+            <OrderPurchasedItems items={successItems} />
+            {successCards.length > 0 && (
+              <VoucherGrid cards={successCards} items={successItems} onCopy={handleCopy} />
             )}
             {successPending && (
               <ProcessingStatusBlock
@@ -798,7 +823,7 @@ function Cart() {
                 polling={fetchingCodes || successPoll.polling}
                 error={fetchCodesError}
                 onFetchNow={handleFetchCodesOnSuccess}
-                fetchLabel={orderResult.cards?.length ? "Refresh codes now" : "Fetch codes now"}
+                fetchLabel={successCards.length ? "Refresh codes now" : "Fetch codes now"}
               />
             )}
           </div>
@@ -851,7 +876,16 @@ function Cart() {
             </div>
 
             <div className="summary-panel">
-              <h3>Delivery details</h3>
+              <h3>{user ? "Delivery details" : "Checkout"}</h3>
+
+              {!user ? (
+                <div className="cart-guest-banner">
+                  <p className="muted">Your cart is saved on this device. Sign in when you&apos;re ready to checkout — nothing will be lost.</p>
+                  <Link to="/login?from=/cart" className="btn btn-primary btn-block btn-lg">Sign in to checkout</Link>
+                  <Link to="/login?from=/cart" className="btn btn-ghost btn-block">Create account</Link>
+                </div>
+              ) : (
+                <>
               <div className="input-group">
                 <label>Mobile number</label>
                 <div className="country-code-wrap">
@@ -860,9 +894,11 @@ function Cart() {
                 </div>
               </div>
               <div className="input-group">
-                <label>Email address</label>
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="recipient@example.com" />
+                <label>Account email</label>
+                <input type="email" value={email} readOnly disabled className="input-readonly" />
               </div>
+                </>
+              )}
 
               <div className="summary-total">
                 <span className="label">Total to pay</span>
@@ -870,9 +906,11 @@ function Cart() {
               </div>
 
               {error && <p className="error-text">{error}</p>}
+              {user && (
               <button className="btn btn-primary btn-block btn-lg" onClick={handleCheckout} disabled={loading || cart.length === 0}>
                 {loading ? "Processing..." : "Place order"}
               </button>
+              )}
             </div>
           </div>
         )}
@@ -1000,7 +1038,11 @@ function OrderHistory() {
 
 // --- App ---
 function App() {
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() => loadStoredCart());
+
+  useEffect(() => {
+    saveStoredCart(cart);
+  }, [cart]);
 
   const addToCart = (item: CartItem) => {
     setCart((prev) => {
@@ -1025,10 +1067,14 @@ function App() {
     setCart((prev) => prev.map((i) => (i.sku === sku && i.amount === amount ? { ...i, quantity: qty } : i)));
   };
 
-  const clearCart = () => setCart([]);
+  const clearCart = () => {
+    setCart([]);
+    clearStoredCart();
+  };
 
   return (
     <ThemeProvider>
+      <AuthProvider>
       <CartContext.Provider value={{ cart, addToCart, removeFromCart, updateQuantity, clearCart }}>
         <Router>
           <div className="app">
@@ -1036,14 +1082,16 @@ function App() {
             <Routes>
               <Route path="/" element={<Landing />} />
               <Route path="/catalog" element={<Catalogue />} />
+              <Route path="/login" element={<AuthPage />} />
               <Route path="/cart" element={<Cart />} />
-              <Route path="/orders" element={<OrderHistory />} />
+              <Route path="/orders" element={<ProtectedRoute><OrderHistory /></ProtectedRoute>} />
               <Route path="/product/:sku" element={<ProductDetail />} />
             </Routes>
             <Footer />
           </div>
         </Router>
       </CartContext.Provider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

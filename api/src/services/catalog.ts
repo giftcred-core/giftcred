@@ -1,5 +1,6 @@
 import sanitizeHtml from "sanitize-html";
 import type { PoolClient } from "pg";
+import { asJsonArray } from "../util/array.js";
 import { loadCatalogFromDb, saveCatalogToDb, upsertCatalogProductInDb } from "./catalog-cache.js";
 import { WoohooAPIError, WoohooClient } from "../woohoo/client.js";
 
@@ -82,9 +83,7 @@ function intPrice(value: unknown, fallback = 0): number {
 }
 
 function parseDenominations(price: Record<string, unknown> | undefined): number[] {
-  const raw = price?.denominations;
-  if (!Array.isArray(raw)) return [];
-  return raw
+  return asJsonArray(price?.denominations)
     .map((item) => String(item).trim())
     .filter((s) => /^\d+$/.test(s))
     .map((s) => parseInt(s, 10));
@@ -103,7 +102,7 @@ function productImage(raw: Record<string, unknown>): string {
 function importantPoints(raw: Record<string, unknown>): string[] {
   const points: string[] = [];
   const cpg = (raw.cpg as Record<string, unknown>) || {};
-  for (const item of (cpg.redemptionTerms as unknown[]) || []) {
+  for (const item of asJsonArray(cpg.redemptionTerms)) {
     if (item) points.push(String(item));
   }
   if (raw.importantInstructions) points.push(String(raw.importantInstructions));
@@ -141,7 +140,7 @@ function termsHtml(raw: Record<string, unknown>, validity: string): string {
   if (content && !content.toLowerCase().includes("brand tnc")) sections.push(content);
 
   const cpg = (raw.cpg as Record<string, unknown>) || {};
-  const termsList = ((cpg.redemptionTerms as unknown[]) || [])
+  const termsList = asJsonArray(cpg.redemptionTerms)
     .map((t) => String(t).trim())
     .filter(Boolean);
   if (termsList.length) {
@@ -248,11 +247,12 @@ async function loadCatalog(client: PoolClient, woohoo: WoohooClient): Promise<vo
     if (pageResp.statusCode >= 400) {
       throw new WoohooAPIError(`Category products failed: HTTP ${pageResp.statusCode}`);
     }
-    const page = JSON.parse(pageResp.body) as { products?: Record<string, unknown>[] };
-    const batch = page.products || [];
+    const page = JSON.parse(pageResp.body) as { products?: unknown };
+    const batch = asJsonArray<Record<string, unknown>>(page.products);
     if (!batch.length) break;
 
     for (const raw of batch) {
+      if (!raw || typeof raw !== "object") continue;
       const sku = String(raw.sku || "").trim();
       if (!isWoohooSku(sku)) continue;
       productsBySku.set(sku, toListItem(raw, categoryName));
@@ -295,7 +295,8 @@ function applyCacheFromDb(data: {
   categoryName: string;
   loadedAt: string;
 }): void {
-  cache.products = sortedProducts([...data.products]);
+  const products = asJsonArray<CatalogProduct>(data.products).filter((p) => p?.sku);
+  cache.products = sortedProducts(products);
   cache.bySku = new Map(cache.products.map((p) => [p.sku, p]));
   cache.detailSkus = data.detailSkus;
   cache.categoryName = data.categoryName;

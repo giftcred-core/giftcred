@@ -25,6 +25,19 @@ export function getPool(): Pool {
     pool = new Pool({
       connectionString,
       ssl: resolveSsl(connectionString),
+      // Remote Postgres behind a firewall/NAT often drops idle TCP sockets.
+      // Keepalives + a short idle timeout let us recycle dead connections.
+      keepAlive: true,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 10_000,
+    });
+
+    // The pool emits 'error' on idle clients (e.g. ECONNRESET when the DB
+    // closes an idle connection). Without a listener Node crashes the whole
+    // process, so we swallow it here — the bad client is already removed and
+    // the next query will transparently open a fresh connection.
+    pool.on("error", (err) => {
+      console.error("[db] idle client error (connection will be recycled):", err.message);
     });
   }
   return pool;
@@ -82,6 +95,42 @@ export async function initDb(): Promise<void> {
         loaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS app_users (
+        id SERIAL PRIMARY KEY,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    // orders.user_id may have been partially added against a conflicting legacy users table
+    await client.query(`
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'user_id'
+        ) AND NOT EXISTS (
+          SELECT 1 FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+          WHERE tc.table_name = 'orders' AND tc.constraint_type = 'FOREIGN KEY'
+            AND kcu.column_name = 'user_id'
+            AND kcu.table_name = 'orders'
+        ) THEN
+          ALTER TABLE orders DROP COLUMN user_id;
+        END IF;
+      END $$
+    `);
+    await client.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'user_id'
+        ) THEN
+          ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES app_users(id);
+        END IF;
+      END $$
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id)`);
     await client.query("COMMIT");
     initialized = true;
   } catch (err) {

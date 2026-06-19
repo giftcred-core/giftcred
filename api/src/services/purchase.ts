@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { PoolClient } from "pg";
+import { asJsonArray } from "../util/array.js";
 import { WoohooClient } from "../woohoo/client.js";
 import { saveOrder } from "./order.js";
 
@@ -16,6 +17,7 @@ export interface PurchaseLine {
 export interface PurchaseDetails {
   mobileNumber: string;
   email: string;
+  userId: number;
 }
 
 export interface PlacedCard {
@@ -93,8 +95,8 @@ export function buildWoohooOrderPayload(
   };
 }
 
-function mapCards(raw: Record<string, unknown>[]): PlacedCard[] {
-  return raw.map((card) => ({
+function mapCards(raw: unknown): PlacedCard[] {
+  return asJsonArray<Record<string, unknown>>(raw).map((card) => ({
     cardNumber: String(card.cardNumber ?? "N/A"),
     cardPin: String(card.cardPin ?? "N/A"),
     activationCode: String(card.activationCode ?? "N/A"),
@@ -150,11 +152,11 @@ export async function placePurchaseOrders(
   const data = JSON.parse(response.body) as {
     orderId?: string;
     refno?: string;
-    cards?: Record<string, unknown>[];
+    cards?: unknown;
     status?: string;
   };
 
-  const cards = syncOnly ? mapCards(data.cards || []) : [];
+  const cards = syncOnly ? mapCards(data.cards) : [];
   const orderId = data.orderId;
   const responseRefno = data.refno ?? refno;
   const status =
@@ -174,6 +176,7 @@ export async function placePurchaseOrders(
       email: details.email,
       status,
       cards: cards.length ? cards : null,
+      userId: details.userId,
     });
   }
 

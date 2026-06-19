@@ -1,3 +1,4 @@
+import { asJsonArray } from "../util/array.js";
 import type { PoolClient } from "pg";
 import type { CatalogProduct } from "./catalog.js";
 
@@ -35,8 +36,8 @@ export async function loadCatalogFromDb(
   if (age > catalogTtlMs()) return null;
 
   return {
-    products: row.products || [],
-    detailSkus: new Set(row.detail_skus || []),
+    products: asJsonArray<CatalogProduct>(row.products).filter((p) => p?.sku),
+    detailSkus: new Set(asJsonArray<string>(row.detail_skus).map(String)),
     categoryName: row.category_name || "Gift Card",
     loadedAt: new Date(row.loaded_at).toISOString(),
   };
