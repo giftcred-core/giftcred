@@ -2,10 +2,16 @@
   "name": "giftcred",
   "private": true,
   "version": "1.0.0",
+  "description": "Giftcred — React frontend + Node.js Express backend",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build:frontend": "cd frontend && npm install && npm run build",
-    "dev:api": "tsx api/dev.ts",
+    "dev": "tsx backend/server.ts",
+    "dev:api": "tsx backend/server.ts",
+    "start": "tsx backend/server.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -14,7 +20,7 @@
     "express": "^4.21.2",
     "pg": "^8.13.3",
     "sanitize-html": "^2.14.0",
-    "serverless-http": "^3.2.0"
+    "tsx": "^4.19.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
@@ -22,8 +28,6 @@
     "@types/node": "^22.13.10",
     "@types/pg": "^8.11.11",
     "@types/sanitize-html": "^2.13.0",
-    "@vercel/node": "^5.1.8",
-    "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   }
 }

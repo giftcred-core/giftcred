@@ -2,11 +2,11 @@ import dotenv from "dotenv";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-// Load env: repo root `.env` wins; fall back to `backend-python/.env` (same vars as Python backend)
+// Load env: repo root `.env` (primary), optional `backend/.env`
 const root = process.cwd();
-const backendPythonEnv = resolve(root, "backend-python/.env");
+const backendEnv = resolve(root, "backend/.env");
 const rootEnv = resolve(root, ".env");
-if (existsSync(backendPythonEnv)) dotenv.config({ path: backendPythonEnv });
+if (existsSync(backendEnv)) dotenv.config({ path: backendEnv });
 if (existsSync(rootEnv)) dotenv.config({ path: rootEnv });
 
 function requireEnv(name: string): string {

@@ -1,6 +1,6 @@
 import axios from "axios";
+import { API_BASE_URL } from "./config";
 
-const API_BASE = import.meta.env.VITE_API_URL || "/api";
 const TOKEN_KEY = "giftcred-token";
 
 export interface AuthUser {
@@ -17,7 +17,7 @@ export function setStoredToken(token: string | null): void {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
-export const apiClient = axios.create({ baseURL: API_BASE });
+export const apiClient = axios.create({ baseURL: API_BASE_URL });
 
 apiClient.interceptors.request.use((config) => {
   const token = getStoredToken();

@@ -1,142 +1,265 @@
 # Giftcred — Deployment Guide
 
-Deploy **frontend + API together on Vercel**. Your **PostgreSQL database stays on a separate provider** — Neon, Supabase, Railway, etc. Vercel does not host your data unless you explicitly choose Vercel Postgres.
+Step-by-step instructions to deploy Giftcred in production.
 
-## Three separate services
-
-| Service | Where | Connected via |
-|---------|--------|----------------|
-| **Frontend + API** | Vercel (one project) | Browser → `https://your-app.vercel.app` |
-| **PostgreSQL** | **Separate** remote host | `DATABASE_URL` env var in Vercel |
-| **Woohoo API** | Qwikcilver/Woohoo cloud | Woohoo env vars in Vercel |
-
-Nothing runs on your laptop in production. The Express API on Vercel connects **out** to your remote database over the internet using `DATABASE_URL` — same idea as the old Python backend on Railway/Render.
-
-## Architecture
+**Architecture:** React frontend on **Vercel** + Node.js API on a **VPS with a Woohoo-whitelisted IP**.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Vercel (single project, repo root)                         │
-│  ┌──────────────────┐         ┌──────────────────────────┐  │
-│  │  React/Vite      │  /api   │  Express (serverless)    │  │
-│  │  frontend/dist   │ ──────► │  api/index.ts            │  │
-│  └──────────────────┘         └────────────┬─────────────┘  │
-└────────────────────────────────────────────┼────────────────┘
-                                             │ DATABASE_URL
-                                             ▼
-                                    ┌──────────────────┐
-                                    │  PostgreSQL      │
-                                    └──────────────────┘
-                                             │
-                                             ▼ HTTPS
-                                    ┌──────────────────┐
-                                    │  Woohoo API      │
-                                    └──────────────────┘
+Browser
+   │
+   ▼
+Vercel (frontend)  ──HTTPS──►  VPS (Node.js backend)  ──►  PostgreSQL
+                                      │
+                                      └──►  Woohoo API (IP-restricted)
 ```
 
-| Component | Where it runs | Notes |
-|-----------|---------------|-------|
-| **Frontend** | Vercel static (`frontend/dist`) | Built via root `vercel.json` |
-| **API** | Vercel serverless (`api/`) | Express app, same domain as frontend |
-| **Database** | Managed PostgreSQL | Required — set `DATABASE_URL` in Vercel |
-| **Python backend** | `backend-python/` | **Reference only** — not deployed |
+| What | Where |
+|------|--------|
+| Frontend | Vercel |
+| Backend (Node.js + Express) | Your VPS |
+| Database | Postgres (`DATABASE_URL`) |
+| `backend-python/` | Not deployed — reference only |
 
 ---
 
-## Before you deploy — checklist
+## Prerequisites
 
-- [ ] Woohoo credentials (start with **sandbox**)
-- [ ] `DATABASE_URL` points to managed Postgres (not localhost)
-- [ ] All env vars from `.env.example` set in **Vercel → Settings → Environment Variables**
-- [ ] `npm run typecheck` passes at repo root
-- [ ] `cd frontend && npm run build` passes
-- [ ] `.env` files are **never** committed
+Complete these **before** deploying:
 
----
-
-## 1. Database (separate — not on Vercel)
-
-Provision Postgres on any managed provider. The database does **not** need to be on Vercel.
-
-**Examples:** Neon, Supabase, Railway, Render, AWS RDS, Azure PostgreSQL  
-**Optional:** Vercel Postgres (if you want DB and app in one dashboard)
-
-Copy the connection string into Vercel as `DATABASE_URL`:
-
-```env
-DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/DATABASE
-```
-
-Tables are created automatically on first API request.
-
-Enable SSL if your provider requires it (`?sslmode=require`).
+1. **VPS** with a **static public IP** that Woohoo has whitelisted.
+2. **PostgreSQL** running and reachable from the VPS.
+3. **Woohoo sandbox credentials** (or production credentials when ready).
+4. **Domain names** (recommended):
+   - `your-app.vercel.app` (automatic from Vercel)
+   - `api.yourdomain.com` → points to your VPS
+5. **Node.js 20+** installed on the VPS.
+6. Repo pushed to **GitHub**.
 
 ---
 
-## 2. Deploy on Vercel
+## Part 1 — Deploy the backend (VPS)
 
-### Import project
-
-1. Push repo to GitHub.
-2. [Vercel](https://vercel.com) → **Add New Project** → import repo.
-3. **Root Directory:** leave as **`.`** (repo root) — not `frontend/`.
-4. Framework preset is auto-detected from `vercel.json`.
-
-### Root `vercel.json` (already in repo)
-
-| Setting | Value |
-|---------|-------|
-| **Build Command** | `cd frontend && npm install && npm run build` |
-| **Output Directory** | `frontend/dist` |
-| **Install Command** | `npm install` |
-
-Routes:
-
-- `/api/*` → Express serverless function
-- everything else → SPA (`index.html`)
-
-### Environment variables (Vercel dashboard)
-
-Copy from `.env.example`:
-
-| Variable | Required |
-|----------|----------|
-| `WOOHOO_CONSUMER_KEY` | Yes |
-| `WOOHOO_CONSUMER_SECRET` | Yes |
-| `WOOHOO_USERNAME` | Yes |
-| `WOOHOO_PASSWORD` | Yes |
-| `DATABASE_URL` | Yes |
-| `WOOHOO_BASE_URL` | Yes (sandbox: `https://sandbox.woohoo.in`) |
-| `CORS_ORIGINS` | No (defaults to `*`) |
-| `CATALOG_CACHE_TTL_HOURS` | No (default `720` ≈ **once per month**) |
-
-**Catalog caching:** Product list is stored in Postgres (`catalog_cache`). Woohoo is called only when the cache is older than 30 days (unless you override `CATALOG_CACHE_TTL_HOURS`).
-
-**`VITE_API_URL` is not required** when frontend and API share the same Vercel domain — the app uses `/api` on the same host.
-
-Only set `VITE_API_URL` if the API runs on a **different** domain.
-
-### After deploy — smoke test
+### Step 1: SSH into your VPS
 
 ```bash
-curl https://YOUR-APP.vercel.app/api/catalog
+ssh user@YOUR_VPS_IP
 ```
 
-First catalog load can take **30–60 seconds** (Woohoo pagination). Vercel Hobby has a **10s function timeout** — upgrade to Pro (60s) or warm the cache if catalog requests time out.
+### Step 2: Clone the repo
 
----
+```bash
+git clone https://github.com/YOUR_ORG/giftcred1.git
+cd giftcred1
+```
 
-## 3. Local development
-
-**Terminal 1 — API:**
+### Step 3: Install dependencies
 
 ```bash
 npm install
-copy .env.example .env
-npm run dev:api
 ```
 
-**Terminal 2 — Frontend:**
+### Step 4: Create environment file
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Fill in these values:
+
+```env
+# Woohoo
+WOOHOO_CONSUMER_KEY=your_key
+WOOHOO_CONSUMER_SECRET=your_secret
+WOOHOO_USERNAME=your_username
+WOOHOO_PASSWORD=your_password
+WOOHOO_BASE_URL=https://sandbox.woohoo.in
+
+# Database
+DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/DATABASE
+
+# Auth (use a long random string — e.g. openssl rand -base64 32)
+AUTH_SECRET=your-long-random-secret
+
+# Frontend URL(s) — exact match, comma-separated, no trailing slash
+CORS_ORIGINS=https://your-app.vercel.app
+
+# Optional
+PORT=8000
+```
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `WOOHOO_*` | Yes | From Woohoo dashboard |
+| `DATABASE_URL` | Yes | Postgres connection string |
+| `AUTH_SECRET` | Yes | Signs login tokens |
+| `CORS_ORIGINS` | Yes | Your Vercel URL (add custom domain later if needed) |
+| `PORT` | No | Default `8000` |
+
+**Database SSL:** If Postgres requires SSL, add `?sslmode=require` to `DATABASE_URL` or set `DATABASE_SSL=true`.
+
+### Step 5: Start the API
+
+**Option A — quick test:**
+
+```bash
+npm start
+```
+
+**Option B — production (recommended with PM2):**
+
+```bash
+npm install -g pm2
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup
+```
+
+The API listens on `http://0.0.0.0:8000`.
+
+### Step 6: Verify the API
+
+From your laptop:
+
+```bash
+curl http://YOUR_VPS_IP:8000/api/health
+```
+
+Expected response:
+
+```json
+{"status":"ok","database":"connected","db":"postgres","timestamp":"..."}
+```
+
+Also test catalog (may take a few seconds on first load):
+
+```bash
+curl http://YOUR_VPS_IP:8000/api/catalog
+```
+
+### Step 7: Add HTTPS with nginx (recommended)
+
+Point DNS `api.yourdomain.com` → your VPS IP, then:
+
+```bash
+sudo apt install nginx certbot python3-certbot-nginx
+sudo certbot --nginx -d api.yourdomain.com
+```
+
+Edit nginx site config:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name api.yourdomain.com;
+
+    ssl_certificate     /etc/letsencrypt/live/api.yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.yourdomain.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+curl https://api.yourdomain.com/api/health
+```
+
+### Step 8: Open firewall ports
+
+Allow HTTP/HTTPS (and optionally 8000 for direct testing):
+
+```bash
+sudo ufw allow 80
+sudo ufw allow 443
+```
+
+---
+
+## Part 2 — Deploy the frontend (Vercel)
+
+### Step 1: Import project
+
+1. Go to [vercel.com](https://vercel.com) → **Add New Project**.
+2. Import your GitHub repo.
+3. **Root Directory:** leave as **`.`** (repo root — not `frontend/`).
+4. Vercel reads `vercel.json` automatically — no extra build settings needed.
+
+### Step 2: Set environment variable
+
+In **Vercel → Project → Settings → Environment Variables**, add:
+
+| Name | Value | Environments |
+|------|-------|--------------|
+| `VITE_API_URL` | `https://api.yourdomain.com/api` | Production, Preview, Development |
+
+**Important:**
+
+- Must include the **`/api` suffix**.
+- Use **HTTPS** if nginx is set up.
+- This is baked in at **build time** — you must **redeploy** after changing it.
+
+You do **not** put Woohoo or database variables on Vercel.
+
+### Step 3: Deploy
+
+Click **Deploy** (or push to `main` if auto-deploy is on).
+
+### Step 4: Update CORS on VPS
+
+After you know your Vercel URL, update `.env` on the VPS:
+
+```env
+CORS_ORIGINS=https://your-app.vercel.app
+```
+
+If you add a custom domain later:
+
+```env
+CORS_ORIGINS=https://your-app.vercel.app,https://www.yourdomain.com
+```
+
+Restart the API:
+
+```bash
+pm2 restart giftcred-api
+```
+
+---
+
+## Part 3 — Verify end-to-end
+
+Run through this checklist after both parts are deployed:
+
+| # | Test | How |
+|---|------|-----|
+| 1 | API health | `curl https://api.yourdomain.com/api/health` |
+| 2 | Catalog loads | Open `https://your-app.vercel.app` — gift cards appear |
+| 3 | Register / login | Create account or sign in |
+| 4 | Cart + checkout | Add item → sign in → place order |
+| 5 | Orders page | Past orders visible when logged in |
+
+---
+
+## Local development
+
+**Terminal 1 — backend:**
+
+```bash
+npm install
+copy .env.example .env    # Windows
+# cp .env.example .env    # Mac/Linux
+npm run dev
+```
+
+**Terminal 2 — frontend:**
 
 ```bash
 cd frontend
@@ -144,43 +267,98 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. Vite proxies `/api` → `http://127.0.0.1:8000`.
+Open **http://localhost:5173** (use `localhost`, not `127.0.0.1`).
+
+Vite proxies `/api` → `http://127.0.0.1:8000` — no `VITE_API_URL` needed locally.
+
+To test against the live VPS API from your machine, create `frontend/.env`:
+
+```env
+VITE_API_URL=https://api.yourdomain.com/api
+```
 
 ---
 
-## 4. API routes
+## Environment variables reference
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/api/catalog` | List gift cards |
-| `GET` | `/api/catalog/{sku}` | Product detail |
-| `POST` | `/api/purchase` | Place order |
-| `GET` | `/api/orders` | Order history |
-| `POST` | `/api/orders/{orderId}/refresh` | Refresh card details |
+### VPS `.env` (backend)
 
----
+| Variable | Required |
+|----------|----------|
+| `WOOHOO_CONSUMER_KEY` | Yes |
+| `WOOHOO_CONSUMER_SECRET` | Yes |
+| `WOOHOO_USERNAME` | Yes |
+| `WOOHOO_PASSWORD` | Yes |
+| `WOOHOO_BASE_URL` | Yes |
+| `DATABASE_URL` | Yes |
+| `AUTH_SECRET` | Yes |
+| `CORS_ORIGINS` | Yes (production) |
+| `WOOHOO_OAUTH2_VERIFY_URL` | No (auto from base URL) |
+| `WOOHOO_OAUTH2_TOKEN_URL` | No (auto from base URL) |
+| `CATALOG_CACHE_TTL_HOURS` | No (default 720 ≈ 30 days) |
+| `PORT` | No (default 8000) |
 
-## 5. Production hardening
+### Vercel (frontend)
 
-- Restrict `CORS_ORIGINS` to your Vercel domain
-- Switch Woohoo from sandbox to production URLs and credentials
-- Update pinned SKUs in `api/src/services/catalog.ts` (`PINNED_SKUS`)
-- Add API authentication before public launch (anyone can call `/api/purchase` today)
-
----
-
-## 6. Troubleshooting
-
-| Problem | Likely cause | Fix |
-|---------|--------------|-----|
-| Vercel build fails | TypeScript errors | `npm run typecheck` locally |
-| API 500 on first request | Missing env vars or DB | Check Vercel logs + `DATABASE_URL` |
-| Catalog timeout | Cold Woohoo cache + Vercel timeout | Pro plan or retry; first load is slow |
-| Frontend 404 on `/catalog` | Wrong root directory | Deploy from **repo root**, not `frontend/` only |
-| CORS error | Restricted origins | Add your Vercel URL to `CORS_ORIGINS` |
+| Variable | Required |
+|----------|----------|
+| `VITE_API_URL` | Yes |
 
 ---
 
-## Python reference
+## API routes
 
-Original FastAPI code: `backend-python/` (not deployed). See `backend-python/README.md`.
+| Method | Path | Auth required |
+|--------|------|---------------|
+| `GET` | `/api/health` | No |
+| `POST` | `/api/auth/register` | No |
+| `POST` | `/api/auth/login` | No |
+| `GET` | `/api/auth/me` | Yes |
+| `GET` | `/api/catalog` | No |
+| `GET` | `/api/catalog/:sku` | No |
+| `POST` | `/api/purchase` | Yes |
+| `GET` | `/api/orders` | Yes |
+| `POST` | `/api/orders/:orderId/refresh` | Yes |
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Blank catalog on Vercel site | Wrong or missing `VITE_API_URL` | Set `https://api.yourdomain.com/api`, redeploy Vercel |
+| CORS error in browser console | `CORS_ORIGINS` mismatch | Add exact Vercel URL to VPS `.env`, restart API |
+| Woohoo 403 / 502 | VPS IP not whitelisted | Confirm public IP with Woohoo support |
+| `database: disconnected` | Bad `DATABASE_URL` or firewall | Test Postgres from VPS; check SSL settings |
+| Login works locally, not on Vercel | `AUTH_SECRET` differs between envs | Use one consistent secret on VPS |
+| Vercel build fails | TypeScript errors | Run `npm run typecheck` and `cd frontend && npm run build` locally |
+| API works via curl, not browser | HTTP vs HTTPS mixed content | Use `https://` in `VITE_API_URL` |
+
+---
+
+## Quick command reference
+
+```bash
+# VPS — start / restart API
+npm start
+pm2 start ecosystem.config.cjs
+pm2 restart giftcred-api
+pm2 logs giftcred-api
+
+# Local — verify before deploy
+npm run typecheck
+cd frontend && npm run build
+
+# Smoke tests
+curl https://api.yourdomain.com/api/health
+curl https://api.yourdomain.com/api/catalog
+```
+
+---
+
+## Security reminders
+
+- Never commit `.env` files to git.
+- Use a strong `AUTH_SECRET` in production.
+- Restrict `CORS_ORIGINS` to your real frontend domains.
+- Switch Woohoo from sandbox to production URLs when going live.
