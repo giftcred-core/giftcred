@@ -21,7 +21,17 @@ npm run dev
 
 Listens on `http://127.0.0.1:8000`. Routes are under `/api/*`.
 
-## Run on VPS (production)
+## Run on VPS with Docker
+
+```bash
+cp .env.example .env   # fill in credentials
+docker compose up -d --build
+docker compose logs -f api
+```
+
+See [DEPLOYMENT.md](../DEPLOYMENT.md) for full instructions.
+
+## Run without Docker
 
 ```bash
 npm install

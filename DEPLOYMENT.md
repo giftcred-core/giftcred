@@ -32,7 +32,7 @@ Complete these **before** deploying:
 4. **Domain names** (recommended):
    - `your-app.vercel.app` (automatic from Vercel)
    - `api.yourdomain.com` → points to your VPS
-5. **Node.js 20+** installed on the VPS.
+5. **Docker** installed on the VPS (recommended), or **Node.js 20+** for manual/PM2 deploy.
 6. Repo pushed to **GitHub**.
 
 ---
@@ -52,13 +52,7 @@ git clone https://github.com/YOUR_ORG/giftcred1.git
 cd giftcred1
 ```
 
-### Step 3: Install dependencies
-
-```bash
-npm install
-```
-
-### Step 4: Create environment file
+### Step 3: Create environment file
 
 ```bash
 cp .env.example .env
@@ -98,15 +92,66 @@ PORT=8000
 
 **Database SSL:** If Postgres requires SSL, add `?sslmode=require` to `DATABASE_URL` or set `DATABASE_SSL=true`.
 
-### Step 5: Start the API
+**Database on the same VPS:** If Postgres runs on the host (not in Docker), use the host IP from inside the container:
 
-**Option A — quick test:**
+```env
+# Linux — reach host Postgres from Docker container
+DATABASE_URL=postgres://USER:PASSWORD@host.docker.internal:5432/DATABASE
+```
+
+On Linux Docker, add to `docker-compose.yml` under `api`:
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+---
+
+### Step 4A: Run with Docker (recommended)
+
+Requires [Docker](https://docs.docker.com/engine/install/) and Docker Compose on the VPS.
+
+```bash
+docker compose up -d --build
+```
+
+Check status:
+
+```bash
+docker compose ps
+docker compose logs -f api
+curl http://localhost:8000/api/health
+```
+
+Update after code changes:
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+Stop:
+
+```bash
+docker compose down
+```
+
+---
+
+### Step 4B: Run without Docker (Node.js + PM2)
+
+```bash
+npm install
+```
+
+**Quick test:**
 
 ```bash
 npm start
 ```
 
-**Option B — production (recommended with PM2):**
+**Production (PM2):**
 
 ```bash
 npm install -g pm2
@@ -115,9 +160,9 @@ pm2 save
 pm2 startup
 ```
 
-The API listens on `http://0.0.0.0:8000`.
+---
 
-### Step 6: Verify the API
+### Step 5: Verify the API
 
 From your laptop:
 
@@ -137,7 +182,7 @@ Also test catalog (may take a few seconds on first load):
 curl http://YOUR_VPS_IP:8000/api/catalog
 ```
 
-### Step 7: Add HTTPS with nginx (recommended)
+### Step 6: Add HTTPS with nginx (recommended)
 
 Point DNS `api.yourdomain.com` → your VPS IP, then:
 
@@ -172,7 +217,7 @@ sudo nginx -t && sudo systemctl reload nginx
 curl https://api.yourdomain.com/api/health
 ```
 
-### Step 8: Open firewall ports
+### Step 7: Open firewall ports
 
 Allow HTTP/HTTPS (and optionally 8000 for direct testing):
 
@@ -339,7 +384,12 @@ VITE_API_URL=https://api.yourdomain.com/api
 ## Quick command reference
 
 ```bash
-# VPS — start / restart API
+# VPS — Docker (recommended)
+docker compose up -d --build
+docker compose logs -f api
+docker compose down
+
+# VPS — PM2 (no Docker)
 npm start
 pm2 start ecosystem.config.cjs
 pm2 restart giftcred-api
