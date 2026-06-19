@@ -29,6 +29,11 @@ export function createApp() {
     })
   );
 
+  // Liveness probe — no DB; used by Docker/Coolify healthchecks.
+  app.get("/api/live", (_req, res) => {
+    res.json({ status: "ok" });
+  });
+
   app.use(async (_req: Request, _res: Response, next: NextFunction) => {
     try {
       await ensureDb();
