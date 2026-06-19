@@ -22,7 +22,7 @@ USER node
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD-SHELL wget -qO- "http://127.0.0.1:$${PORT:-8000}/api/health" >/dev/null 2>&1 || exit 1
+  CMD ["/bin/sh", "-c", "wget -qO- http://127.0.0.1:$${PORT:-8000}/api/health >/dev/null 2>&1 || exit 1"]
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["npm", "start"]
