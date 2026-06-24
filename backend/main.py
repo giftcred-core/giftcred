@@ -1,12 +1,16 @@
 import uuid
 import json
-from fastapi import FastAPI, HTTPException
+from typing import Annotated, List
+
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy import text
 
+from auth_middleware import AuthUser, get_current_user
 from database import init_db, get_session
-from woohoo_client import WoohooClient
 from models import Order
+from woohoo_client import WoohooClient
 
 app = FastAPI()
 
@@ -22,7 +26,6 @@ app.add_middleware(
 def on_startup():
     init_db()
 
-from typing import List
 
 class CartItem(BaseModel):
     sku: str
@@ -35,7 +38,6 @@ class PurchaseRequest(BaseModel):
     email: str
     message: str = ""
 
-from sqlalchemy import text
 
 @app.get("/api/catalog")
 def get_catalog():
@@ -101,7 +103,10 @@ def get_product(sku: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/purchase")
-def place_order(req: PurchaseRequest):
+def place_order(
+    req: PurchaseRequest,
+    user: Annotated[AuthUser, Depends(get_current_user)],
+):
     client = WoohooClient()
     refno = f"ORDER-{uuid.uuid4().hex[:12].upper()}"
     
@@ -110,11 +115,13 @@ def place_order(req: PurchaseRequest):
     if len(formatted_mobile) == 10 and formatted_mobile.isdigit():
         formatted_mobile = f"+91{formatted_mobile}"
     
+    order_email = req.email or user.email
+    
     order_payload = {
         "address": {
             "firstname": "Giftcred",
             "lastname": "User",
-            "email": req.email,
+            "email": order_email,
             "telephone": formatted_mobile,
             "country": "IN",
             "postcode": "560102"
@@ -122,7 +129,7 @@ def place_order(req: PurchaseRequest):
         "billing": {
             "firstname": "Giftcred",
             "lastname": "User",
-            "email": req.email,
+            "email": order_email,
             "telephone": formatted_mobile,
             "country": "IN",
             "postcode": "560102"
@@ -182,17 +189,27 @@ def place_order(req: PurchaseRequest):
                     refno=response_refno,
                     items=items_dict,
                     mobile_number=req.mobileNumber,
-                    email=req.email
+                    email=order_email
                 )
                 session.add(new_order)
                 session.commit()
                 
-            return {"success": True, "orderId": order_id, "refno": response_refno, "cards": cards}
+            return {
+                "success": True,
+                "orderId": order_id,
+                "refno": response_refno,
+                "cards": cards,
+                "placedBy": {
+                    "userId": user.user_id,
+                    "accountId": user.account_id,
+                    "roleSlug": user.role_slug,
+                },
+            }
         else:
             raise HTTPException(status_code=response.status_code, detail=f"Order failed: {response.body}")
 
 @app.get("/api/orders")
-def get_orders():
+def get_orders(user: Annotated[AuthUser, Depends(get_current_user)]):
     client = WoohooClient()
     try:
         with get_session() as session:
@@ -217,7 +234,12 @@ def get_orders():
                     "email": db_order.email,
                     "createdAt": db_order.created_at.isoformat(),
                     "status": "PROCESSING" if response.status_code == 409 else "COMPLETED" if response.status_code == 200 else "FAILED",
-                    "cards": cards_data
+                    "cards": cards_data,
+                    "requestedBy": {
+                        "userId": user.user_id,
+                        "accountId": user.account_id,
+                        "roleSlug": user.role_slug,
+                    },
                 })
             
             return result

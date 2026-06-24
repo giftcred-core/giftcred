@@ -30,6 +30,8 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    jwt_secret: str = Field(default="change-me-access-secret-min-32-chars", alias="JWT_SECRET")
+
     @property
     def database_url(self) -> str:
         return f"postgresql+psycopg2://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
