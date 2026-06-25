@@ -1,4 +1,6 @@
-.venv/
-__pycache__/
-*.pyc
+node_modules/
 .env
+responses/
+dist/
+e2e-report.log
+e2e-report.json
