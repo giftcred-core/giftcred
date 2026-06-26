@@ -119,6 +119,8 @@ describe("BMS: Double-entry bookkeeping", () => {
     let ctx: TestContext | null = null;
     try {
       ctx = await setupWalletContext(0);
+      const initialPool = await withClient((client) => getAccountById(client, ctx!.poolId));
+      const initialBalance = initialPool?.ledger_balance ?? 0;
 
       await withTransaction((client) =>
         fundWallet(client, ctx!.tenantId, ctx!.walletId, ctx!.poolId, 2500, `fund-balanced-${Date.now()}`)
@@ -128,7 +130,7 @@ describe("BMS: Double-entry bookkeeping", () => {
       const pool = await withClient((client) => getAccountById(client, ctx!.poolId));
 
       expect(wallet?.ledger_balance).toBe(2500);
-      expect(pool?.ledger_balance).toBe(-2500);
+      expect(pool?.ledger_balance).toBe(initialBalance - 2500);
     } finally {
       if (ctx) await cleanupTestUser(ctx.userId);
     }
