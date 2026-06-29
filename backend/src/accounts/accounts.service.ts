@@ -94,8 +94,74 @@ export async function listAccountsInScope(
 
 export async function getAccountById(client: PoolClient, accountId: number) {
   const result = await client.query(
-    `SELECT id, name, account_type, parent_account_id, status, metadata, created_at FROM accounts WHERE id = $1`,
+    `
+    SELECT id, name, account_type, parent_account_id, status, metadata, created_at,
+           COALESCE(mfa_enforced, FALSE) AS mfa_enforced,
+           COALESCE(sso_enforced, FALSE) AS sso_enforced,
+           COALESCE(ip_allowlist, '[]'::jsonb) AS ip_allowlist
+    FROM accounts WHERE id = $1
+    `,
     [accountId]
   );
   return result.rows[0] ?? null;
+}
+
+export async function updateAccountSecurity(
+  client: PoolClient,
+  accountId: number,
+  input: {
+    ssoEnforced?: boolean;
+    ipAllowlist?: string[];
+    actingUserId: number;
+    ipAddress?: string;
+  }
+) {
+  const updates: string[] = [];
+  const params: unknown[] = [];
+  let idx = 1;
+
+  if (input.ssoEnforced !== undefined) {
+    updates.push(`sso_enforced = $${idx++}`);
+    params.push(input.ssoEnforced);
+  }
+  if (input.ipAllowlist !== undefined) {
+    updates.push(`ip_allowlist = $${idx++}::jsonb`);
+    params.push(JSON.stringify(input.ipAllowlist));
+  }
+
+  if (!updates.length) {
+    throw new Error("No security fields to update.");
+  }
+
+  updates.push(`updated_at = NOW()`);
+  params.push(accountId);
+
+  const result = await client.query(
+    `
+    UPDATE accounts
+    SET ${updates.join(", ")}
+    WHERE id = $${idx}
+    RETURNING id, name, account_type, parent_account_id, status, metadata, created_at,
+              COALESCE(mfa_enforced, FALSE) AS mfa_enforced,
+              COALESCE(sso_enforced, FALSE) AS sso_enforced,
+              COALESCE(ip_allowlist, '[]'::jsonb) AS ip_allowlist
+    `,
+    params
+  );
+
+  const account = result.rows[0];
+  if (!account) return null;
+
+  await writeAuditLog(client, {
+    actingUserId: input.actingUserId,
+    accountId,
+    action: AuditAction.ACCOUNT_UPDATED,
+    newValue: {
+      ssoEnforced: input.ssoEnforced,
+      ipAllowlist: input.ipAllowlist,
+    },
+    ipAddress: input.ipAddress ?? null,
+  });
+
+  return account;
 }

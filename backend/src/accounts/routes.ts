@@ -9,7 +9,9 @@ import {
   createMasterAccount,
   getAccountById,
   listAccountsInScope,
+  updateAccountSecurity,
 } from "./accounts.service.js";
+import { AuthError } from "../lib/errors.js";
 
 export const accountsRouter = Router();
 
@@ -40,6 +42,44 @@ accountsRouter.get("/:accountId", requirePrivilege("view_accounts"), async (req:
     }
     res.json({ account });
   } catch (err) {
+    next(err);
+  }
+});
+
+accountsRouter.patch("/:accountId", requirePrivilege("manage_accounts"), async (req: AuthedRequest, res, next) => {
+  try {
+    const accountId = Number(req.params.accountId);
+    if (!req.auth?.isPlatformAdmin && accountId !== req.auth!.accountId) {
+      res.status(403).json({ error: "Cannot update accounts outside your organization." });
+      return;
+    }
+
+    const ssoEnforced =
+      req.body?.ssoEnforced !== undefined ? Boolean(req.body.ssoEnforced) : undefined;
+    const ipAllowlist = Array.isArray(req.body?.ipAllowlist)
+      ? req.body.ipAllowlist.map((entry: unknown) => String(entry))
+      : undefined;
+
+    const account = await withClient((client) =>
+      updateAccountSecurity(client, accountId, {
+        ssoEnforced,
+        ipAllowlist,
+        actingUserId: req.auth!.userId,
+        ipAddress: extractClientIp(req),
+      })
+    );
+
+    if (!account) {
+      res.status(404).json({ error: "Account not found." });
+      return;
+    }
+
+    res.json({ account });
+  } catch (err) {
+    if (err instanceof AuthError) {
+      res.status(err.statusCode).json({ error: err.message });
+      return;
+    }
     next(err);
   }
 });
